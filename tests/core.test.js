@@ -117,16 +117,17 @@ S1 Ilmu Komunikasi, Universitas Indonesia, 2019
 KEAHLIAN
 SEO, Google Ads, Meta Ads, copywriting, Google Analytics`;
   const jd = `Kami mencari Digital Marketing Specialist. Kualifikasi: pengalaman SEO, Google Ads, Meta Ads, copywriting, Google Analytics, minimal 3 tahun. Tanggung jawab: mengelola budget iklan, analisis performa.`;
-  const a = computeAtsScore(cv, jd);
-  const b = computeAtsScore(cv, jd);
+  const a = computeAtsScore({ cv, jd });
+  const b = computeAtsScore({ cv, jd });
   assert.equal(a.total, b.total);
   assert.ok(a.total >= 0 && a.total <= 100);
   assert.ok(a.total > 40, `skor CV relevan harusnya > 40, dapat ${a.total}`);
-  assert.equal(a.band, atsBand(a.total).label);
+  assert.equal(atsBand(a.total).label, a.total >= 85 ? 'Sangat baik' : a.total >= 70 ? 'Baik' : a.total >= 55 ? 'Cukup' : 'Perlu perbaikan');
 });
 
 test('quickScore konsisten untuk teks mentah', () => {
   const r = scoreRawText('Pengalaman kerja di bidang pemasaran digital. Pendidikan S1. Keahlian SEO dan Google Ads. Kontak: a@b.com 0812', 'Butuh SEO dan Google Ads');
   assert.ok(r.total >= 0 && r.total <= 100);
-  assert.ok(Array.isArray(r.missing));
+  assert.ok(Array.isArray(r.missing_keywords));
+  assert.equal(typeof r.total, 'number');
 });

@@ -41,12 +41,12 @@ function buildLinkedinText(cv, input, jd) {
     cv.summary || '',
     jd?.title ? `Saat ini terbuka untuk peluang sebagai ${jd.title}.` : '',
   ].filter(Boolean).join(' ');
-  const expLines = (cv.experiences || []).slice(0, 4).flatMap((e) => [
+  const expLines = (cv.experience || []).slice(0, 4).flatMap((e) => [
     `${e.title || 'Peran'} — ${e.company || ''} (${e.period || ''})`.trim(),
-    ...(e.achievements || []).slice(0, 3).map((a) => `• ${a}`),
+    ...(e.bullets || []).slice(0, 3).map((a) => `• ${a}`),
     '',
   ]);
-  const eduLines = (cv.educations || []).slice(0, 2).map(
+  const eduLines = (cv.education || []).slice(0, 2).map(
     (e) => `${e.degree || ''} ${e.institution || ''} ${e.year || ''}`.trim(),
   );
   return [

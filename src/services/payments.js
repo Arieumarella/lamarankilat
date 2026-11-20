@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { getDb, audit } from '../db.js';
 import { config, paymentConfigured } from '../config.js';
 import { nowIso, formatRupiah } from '../util.js';
+import { transition, getOrder } from './orders.js';
 
 /** Nominal unik = harga + 3 digit (001–999) yang belum dipakai 24 jam terakhir. */
 export function reserveUniqueAmount(price) {
@@ -35,6 +36,10 @@ export function createPaymentForOrder(order) {
     `order:${order.code}`, amount, nowIso());
   db.prepare('UPDATE orders SET unique_amount = ? WHERE id = ?').run(amount, order.id);
   audit('system', 'payment_created', 'payment', info.lastInsertRowid, { amount });
+  const fresh = getOrder(order.id);
+  if (fresh && fresh.status === 'draft') {
+    transition(order.id, 'awaiting_payment', { via: 'payment_created' }, 'system');
+  }
   return db.prepare('SELECT * FROM payments WHERE id = ?').get(info.lastInsertRowid);
 }
 

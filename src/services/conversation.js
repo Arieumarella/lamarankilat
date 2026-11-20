@@ -209,6 +209,10 @@ export async function handleIncoming({ waNumber, text, waMessageId = null, type 
         await reply('Tulis posisi target, contoh: Admin Gudang.');
         break;
       }
+      if (/@|https?:|^\+?\d{8,}$/.test(message)) {
+        await reply('Itu email/nomor, bukan posisi. Tulis jabatan yang dilamar, contoh: Digital Marketing Specialist.');
+        break;
+      }
       nextCtx.input.target_role = truncate(message, 90);
       nextState = 'ASK_EXPERIENCE';
       await reply([

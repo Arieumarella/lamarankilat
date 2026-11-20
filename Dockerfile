@@ -1,15 +1,18 @@
-# ---- build stage: native modules (better-sqlite3) ----
-FROM node:20-alpine AS deps
-RUN apk add --no-cache python3 make g++
+# ---- deps stage: prebuilt better-sqlite3 (glibc/arm64) tanpa kompilasi ----
+FROM node:20-bookworm-slim AS deps
 WORKDIR /app
+ENV NPM_CONFIG_FUND=false \
+    NPM_CONFIG_AUDIT=false
 COPY package.json ./
-# optionalDependencies (baileys) boleh gagal tanpa menggagalkan build
+# optionalDependencies (baileys) diizinkan ada; npm install tetap jalan walau optional gagal
 RUN npm install --omit=dev --no-audit --no-fund
 
 # ---- runtime stage ----
-FROM node:20-alpine
-RUN apk add --no-cache tzdata font-noto su-exec ca-certificates \
- && cp /usr/share/zoneinfo/Asia/Jakarta /etc/localtime \
+FROM node:20-bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tzdata ca-certificates fonts-noto-core gosu \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -snf /usr/share/zoneinfo/Asia/Jakarta /etc/localtime \
  && echo "Asia/Jakarta" > /etc/timezone
 ENV TZ=Asia/Jakarta \
     NODE_ENV=production \
@@ -22,7 +25,6 @@ COPY src ./src
 COPY public ./public
 COPY migrations ./migrations
 COPY scripts ./scripts
-COPY tests ./tests
 COPY docker-entrypoint.sh ./
 RUN mkdir -p /app/data/db /app/data/artefacts /app/data/media /app/data/wa /app/data/logs \
  && chmod +x /app/docker-entrypoint.sh

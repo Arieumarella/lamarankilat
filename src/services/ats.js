@@ -57,6 +57,13 @@ function normalizeTerm(term) {
   return SYNONYMS[t] || t;
 }
 
+/** Terima array maupun string berkoma/baris-baru dari input mentah. */
+export function asList(value) {
+  if (Array.isArray(value)) return value.filter(Boolean).map((v) => String(v).trim()).filter(Boolean);
+  if (typeof value === 'string') return value.split(/[,;\n]+/).map((v) => v.trim()).filter(Boolean);
+  return [];
+}
+
 function cvToPlainText(cv) {
   const parts = [
     cv?.header?.name, cv?.header?.headline, cv?.header?.city, cv?.summary,
@@ -79,7 +86,7 @@ export function scoreKeyword(cvText, jd, input) {
   const haystack = normalizeText(cvText);
   if (!keywords.length) {
     // tanpa lowongan: estimasi dari keahlian + posisi target (deterministik, bukan karangan)
-    const skills = (input?.skills || []).filter(Boolean);
+    const skills = asList(input?.skills);
     const roleTokens = normalizeText(input?.target_role || '').split(' ').filter((t) => t.length >= 3);
     const hitRole = roleTokens.filter((t) => haystack.includes(t)).length;
     const base = 62 + Math.min(skills.length, 10) * 2 + Math.min(hitRole, 4) * 3;
@@ -232,7 +239,7 @@ export function computeAtsScore({ cv, jd, input, readability = null, meta = {} }
         text: (readable.reasons && readable.reasons[0]) || 'Tulis bullet dengan pola "kata kerja aktif + tindakan + hasil terukur".',
         reason: `Keterbacaan ${readable.score}/100.`,
       });
-    } else if (item.key === 'contact') {
+    } else if (item.key === 'contact' && (contact.missing || []).length) {
       suggestions.push({
         component: 'contact',
         text: `Lengkapi data kontak berikut: ${(contact.missing || []).join(', ')}.`,

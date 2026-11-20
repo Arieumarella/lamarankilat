@@ -1,9 +1,8 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import express from 'express';
-import { config } from './config.js';
+import { config, ensureDirs } from './config.js';
 import { logger } from './logger.js';
-import { ensureDir } from './util.js';
 import { getDb } from './db.js';
 import { migrate } from './migrate.js';
 import { startWorker, stopWorker } from './worker.js';
@@ -15,12 +14,6 @@ import { handleIncoming } from './services/conversation.js';
 import { startWhatsApp, waState } from './services/wa/baileys.js';
 import { setTransport } from './services/wa/sender.js';
 import { audit } from './db.js';
-
-function ensureDirs() {
-  for (const dir of [config.dbDir, config.artefactDir, config.mediaDir, config.logDir]) {
-    ensureDir(dir);
-  }
-}
 
 function buildApp() {
   const app = express();

@@ -16,6 +16,7 @@ function applyFonts(doc) {
 
 function font(doc, f, size) {
   doc.font(f).fontSize(size);
+  return doc;
 }
 
 function finish(doc, outPath) {
@@ -36,6 +37,7 @@ function finish(doc, outPath) {
 function sectionTitle(doc, text, meta) {
   const bottom = doc.page.height - MARGIN;
   if (doc.y > bottom - 120) doc.addPage();
+  doc.x = MARGIN;
   doc.moveDown(0.55);
   font(doc, meta.hasBold ? 'BodyBold' : 'Helvetica-Bold', 10.5).fillColor(COLOR.brand).text(text.toUpperCase(), { characterSpacing: 0.6 });
   doc.moveDown(0.2);
@@ -49,6 +51,7 @@ function bullet(doc, text, meta) {
   doc.circle(MARGIN + 2.5, doc.y + 4.5, 1.5).fillColor(COLOR.muted).fill();
   font(doc, meta.hasRegular ? 'Body' : 'Helvetica', 9.6).fillColor(COLOR.body)
     .text(text, x, doc.y, { width: doc.page.width - MARGIN - x, align: 'left', lineGap: 1.6 });
+  doc.x = MARGIN;
   doc.moveDown(0.18);
 }
 
@@ -72,7 +75,7 @@ export async function renderCvPdf(cv, outPath) {
     font(doc, meta.hasRegular ? 'Body' : 'Helvetica', 11).fillColor(COLOR.brand).text(h.headline, { lineGap: 1 });
   }
   doc.moveDown(0.25);
-  const contact = [h.city, h.email, h.phone, ...(h.links || [])].filter(Boolean).join('  ·  ');
+  const contact = [...new Set([h.city, h.email, h.phone, ...(h.links || [])].filter(Boolean).map((v) => String(v).trim()))].join('  ·  ');
   if (contact) font(doc, meta.hasRegular ? 'Body' : 'Helvetica', 9.2).fillColor(COLOR.muted).text(contact, { lineGap: 1.2 });
 
   doc.moveDown(0.3);

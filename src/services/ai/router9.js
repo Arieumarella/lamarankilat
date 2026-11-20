@@ -1,6 +1,6 @@
-import { config } from '../config.js';
-import { logger } from '../logger.js';
-import { getDb } from '../db.js';
+import { config } from '../../config.js';
+import { logger } from '../../logger.js';
+import { getDb } from '../../db.js';
 
 const cache = new Map();
 

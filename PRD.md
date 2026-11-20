@@ -25,6 +25,16 @@ Dokumen di bawah ini adalah PRD asli. Bagian changelog ini mencatat **deviasi im
 - Retensi artefak 30 hari, hard delete data pelanggan menghapus file + isi input, order tetap disimpan untuk rekap keuangan.
 - Kredensial hanya di `.env` host (mode 600) dan tidak pernah masuk repo/log.
 
+### Status verifikasi (2026-11-21 04:10 WIB)
+
+- E2E nyata lewat `/simulator`: order bundle `LK-261121-ZBL9` → bayar (bukti) → approve admin → **5 dokumen** terkirim (`cv_pdf` 18 KB, `cv_docx` 10 KB, `letter_pdf` 17 KB, `score_pdf` 22 KB, `linkedin_txt` 1 KB), skor ATS 91/100, status `delivered`.
+- Order CV `LK-261121-RPT5` (data bersih "Toko Maju Jaya, admin gudang, 2022-2024") → parse pengalaman benar (`Admin gudang` / `Toko Maju Jaya` / `2022–2024`), bullet `Mengelola stok 500 SKU`, `Meningkatkan akurasi stok 15%`.
+- `node --test tests/`: **10/10 lulus** di dalam container.
+- Pemeriksaan teks PDF (`pdftotext`): A4 1 halaman, heading sejajar margin, tidak ada teks bertumpuk; laporan skor menampilkan 91/100 + 4 komponen.
+- 9Router: koneksi `router9:true`, tetapi key yang tersedia di host ditolak `invalid_api_key` untuk `chat/completions`. Karena itu AI **tidak aktif** saat build; seluruh dokumen dihasilkan jalur fallback deterministik (sesuai deviasi #5). Bila key valid dipasang di `.env`, AI otomatis dipakai tanpa perubahan kode.
+- Docker image `lamarankilat:0.1.0` (bookworm-slim, ARM64), container `lamarankilat-app-1` status `Up (healthy)`, `mem_limit 400m`.
+
+
 ---
 
 # PRD — LamaranKilat

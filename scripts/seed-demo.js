@@ -3,7 +3,7 @@
  * Jalankan: node scripts/seed-demo.js --yes
  * Jangan dijalankan pada database produksi berisi data pelanggan asli.
  */
-import { config } from '../src/config.js';
+import { config, ensureDirs } from '../src/config.js';
 import { logger } from '../src/logger.js';
 import { getDb, audit } from '../src/db.js';
 import { migrate } from '../src/migrate.js';
@@ -13,14 +13,13 @@ import { createOrder, transition, getOrder } from '../src/services/orders.js';
 import { createPaymentForOrder } from '../src/services/payments.js';
 import { startFulfillment } from '../src/services/fulfillment.js';
 import { drain, queueStats } from '../src/services/jobs.js';
-import { ensureDir } from '../src/util.js';
 
 if (!process.argv.includes('--yes')) {
   console.error('Tambahkan --yes untuk benar-benar menulis data demo.');
   process.exit(1);
 }
 
-ensureDir(config.dbDir);
+ensureDirs();
 migrate();
 await registerAll();
 

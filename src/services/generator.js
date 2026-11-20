@@ -36,39 +36,58 @@ export function splitList(raw) {
 }
 
 function normalizePeriod(text) {
-  const m = String(text || '').match(/(19|20)\d{2}\s*(?:[-–—/]|sampai|hingga|s\.d\.?)?\s*(?:(19|20)\d{2}|sekarang|now|present)?/i);
-  if (!m) return String(text || '').trim();
-  const start = m[0].match(/(19|20)\d{2}/)?.[0];
-  const years = m[0].match(/(19|20)\d{2}/g) || [];
-  const end = years.length > 1 ? years[1] : (/sekarang|now|present/i.test(m[0]) ? 'Sekarang' : '');
-  return end ? `${start}–${end}` : String(start);
+  const s = String(text || '');
+  const years = [...new Set(s.match(/\b(19|20)\d{2}\b/g) || [])];
+  if (!years.length) return /sekarang|present|now/i.test(s) ? 'Sekarang' : '';
+  if (years.length >= 2) return `${years[0]}–${years[1]}`;
+  return /sekarang|present|now|kini/i.test(s) ? `${years[0]}–Sekarang` : years[0];
 }
 
 /** Pecah pengalaman teks bebas menjadi struktur. */
 export function parseExperienceRaw(raw) {
   const text = String(raw ?? '').trim();
   if (!text) return [];
-  const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-  const blocks = lines.length > 1 ? lines : text.split(/;\s*/).map((s) => s.trim()).filter(Boolean);
+  const blocks = text.split(/\n+|;\s*/).map((s) => s.trim()).filter(Boolean);
+  const TITLE_HINT = /engineer|developer|admin|staff|manager|specialist|analis|marketing|sales|guru|dosen|designer|desainer|operator|supervisor|leader|head|kasir|barista|teknisi|akuntan|hrd|recruiter|writer|editor|konsultan|officer|intern|magang/i;
+
   return blocks.map((line) => {
-    const [head, ...rest] = line.split(/\s*[,|]\s*/);
-    const period = normalizePeriod(line);
-    const company = head?.trim() || '';
-    const restText = rest.join(', ');
-    const title = rest[0]?.replace(/(19|20)\d{2}.*$/, '').trim() || '';
-    const achievementsRaw = restText
-      .replace(/(19|20)\d{2}\s*[-–—/]?\s*((19|20)\d{2}|sekarang|now|present)?/gi, '')
-      .split(/[.;•]\s*/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 12);
-    return {
-      company,
-      title,
-      period,
-      achievements: achievementsRaw.slice(0, 6),
-      raw: line,
-    };
-  }).filter((e) => e.company);
+    if (/^(fresh graduate|belum ada pengalaman|tidak ada)$/i.test(line)) {
+      return { company: 'Fresh Graduate', title: 'Fresh Graduate', period: '', achievements: [], raw: line };
+    }
+    const clean = line
+      .replace(/[\w.+-]+@[\w.-]+\.\w+/g, ' ')
+      .replace(/(?:\+62|62|0)8[\d\s-]{6,12}\d/g, ' ')
+      .replace(/\b\d{10,14}\b/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    const parts = clean.split(/\s*[,|]\s*/).map((s) => s.trim()).filter(Boolean);
+    const period = normalizePeriod(line) || '';
+
+    let title = '';
+    let company = '';
+    const diMatch = clean.match(/^([^,|]{3,60}?)\s+(?:di|at|pada)\s+([^,|]{3,60})/i);
+    if (diMatch) {
+      title = diMatch[1].trim();
+      company = diMatch[2].trim();
+    } else if (parts.length >= 2) {
+      const [a, b] = parts;
+      if (TITLE_HINT.test(a) && !TITLE_HINT.test(b)) { title = a; company = b; }
+      else { company = a; title = b; }
+    } else {
+      title = parts[0] || '';
+    }
+    const strip = (s) => s.replace(/\([^)]*\)/g, '').replace(/\b(19|20)\d{2}\b.*$/, '').replace(/\s*[-–—]\s*$/, '').trim();
+    title = strip(title).slice(0, 80);
+    company = strip(company).slice(0, 80);
+
+    const achievements = parts.slice(2)
+      .flatMap((p) => p.split(/[.;•]\s*/))
+      .map((s) => s.replace(/\b(19|20)\d{2}\b.*$/, '').trim())
+      .filter((s) => s.length > 12 && !/^(19|20)\d{2}/.test(s))
+      .slice(0, 4);
+
+    return { company, title, period, achievements, raw: line };
+  }).filter((e) => e.title || e.company);
 }
 
 export function parseEducationsRaw(raw) {
@@ -79,7 +98,7 @@ export function parseEducationsRaw(raw) {
     const parts = line.split(/\s*[,|]\s*/);
     const institution = parts[0] || '';
     const year = (line.match(/(19|20)\d{2}(\s*[-–]\s*(19|20)\d{2})?/) || [''])[0];
-    const degree = parts.slice(1).join(', ').replace(/(19|20)\d{2}.*$/, '').trim();
+    const degree = parts.slice(1).join(', ').replace(/(19|20)\d{2}.*$/, '').replace(/(ipk|gpa)\s*[:=]?.*$/i, '').replace(/[,\s]+$/, '').trim();
     const gpaMatch = line.match(/(ipk|gpa)\s*[:=]?\s*([0-9]+([.,][0-9]+)?)/i);
     return {
       institution,
@@ -96,7 +115,7 @@ export function normalizeInput(raw = {}) {
     ? raw.experiences.map((e) => ({
       company: String(e.company || '').trim(),
       title: String(e.title || '').trim(),
-      period: String(e.period || '').trim(),
+      period: normalizePeriod(e.period) || normalizePeriod(raw.experience_raw) || '',
       achievements: splitList(e.achievements),
     }))
     : parseExperienceRaw(raw.experience_raw).map((e) => ({
@@ -106,7 +125,7 @@ export function normalizeInput(raw = {}) {
   const educations = Array.isArray(raw.educations) && raw.educations.length
     ? raw.educations.map((e) => ({
       institution: String(e.institution || '').trim(),
-      degree: String(e.degree || '').trim(),
+      degree: String(e.degree || '').replace(/[,\s]+$/, '').trim(),
       year: String(e.year || '').trim(),
       gpa: String(e.gpa || '').trim(),
     }))
@@ -137,12 +156,20 @@ function polishBullet(text) {
   if (!s) return '';
   const first = s.split(' ')[0]?.toLowerCase();
   if (!ACTION_STARTERS.some((v) => v.toLowerCase() === first)) {
-    const verb = /(\d+%|\d+\s*(unit|orang|klien|transaksi|juta|rb|ribu))/.test(s) ? 'Mencapai' : 'Menangani';
-    s = `${verb} ${s.charAt(0).toLowerCase()}${s.slice(1)}`;
-  } else {
-    s = capitalizeSentence(s);
+    const lower = s.charAt(0).toLowerCase() + s.slice(1);
+    if (/^(naik|meningkat|menaikkan|kenaikan|tingkat)/i.test(s)) {
+      s = `Meningkatkan ${lower.replace(/^(naik|meningkat|menaikkan|kenaikan|tingkat(kan)?)\w*\s*/i, '')}`;
+    } else if (/^(turun|menurun|menurunkan|mengurangi|pengurangan)/i.test(s)) {
+      s = `Menurunkan ${lower.replace(/^(turun|menurun|menurunkan|mengurangi|pengurangan)\w*\s*/i, '')}`;
+    } else if (/^(pegang|handle|mengurus|urus|rekap|kelola|input|entry|catat)/i.test(s)) {
+      s = `Mengelola ${lower.replace(/^(pegang|handle|mengurus|urus|rekap|kelola|input|entry|catat)\w*\s*/i, '')}`;
+    } else if (/(\d+%|\d+\s*(unit|orang|klien|transaksi|juta|rb|ribu|sku))/i.test(s)) {
+      s = `Mencapai ${lower}`;
+    } else {
+      s = `Bertanggung jawab atas ${lower}`;
+    }
   }
-  return truncate(s, 190);
+  return truncate(capitalizeSentence(s), 190);
 }
 
 /** Template deterministik: tanpa LLM, tanpa fabrikasi. */
@@ -160,9 +187,11 @@ export function buildFallbackCv(input) {
 
   const experience = data.experiences.map((e) => ({
     company: e.company,
-    title: e.title || headline,
+    title: capitalizeSentence(e.title || headline),
     period: e.period || '',
-    bullets: (e.achievements.length ? e.achievements : [e.raw || `Menjalankan tugas sebagai ${e.title || headline} di ${e.company}.`])
+    bullets: (e.achievements.length
+      ? e.achievements
+      : [`Menjalankan tugas sebagai ${e.title || headline}${e.company && e.company !== 'Fresh Graduate' ? ` di ${e.company}` : ''}.`])
       .map(polishBullet).filter(Boolean).slice(0, 6),
   }));
 
