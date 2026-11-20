@@ -1,0 +1,10 @@
+node_modules
+data
+.git
+.gitignore
+.env
+.env.*
+*.log
+tests
+PRD.md
+BUILD_SPEC.md

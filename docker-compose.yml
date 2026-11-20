@@ -1,0 +1,29 @@
+name: lamarankilat
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lamarankilat:0.1.0
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8092:8092"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data
+    mem_limit: 400m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "node", "scripts/healthcheck.js"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
