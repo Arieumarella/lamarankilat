@@ -119,12 +119,18 @@ export function scoreKeyword(cvText, jd, input) {
 export function scoreFormat(cv, meta = {}) {
   let score = 100;
   const penalties = [];
-  const headings = new Set((cv?.sections_present || []).map((h) => h.toLowerCase()));
-  const standard = ['ringkasan', 'pengalaman kerja', 'pendidikan', 'keahlian'];
-  const missingHeadings = standard.filter((h) => !headings.has(h));
+  const raw = (cv?.sections_present || []).map((h) => String(h).toLowerCase());
+  const has = (alias) => raw.some((h) => alias.some((a) => h.includes(a)));
+  const required = [
+    { label: 'ringkasan', alias: ['ringkasan', 'summary', 'profil', 'tentang'] },
+    { label: 'pengalaman kerja', alias: ['pengalaman', 'experience', 'pekerjaan', 'kerja'] },
+    { label: 'pendidikan', alias: ['pendidikan', 'education'] },
+    { label: 'keahlian', alias: ['keahlian', 'skill', 'kemampuan', 'kompetensi'] },
+  ];
+  const missingHeadings = required.filter((r) => !has(r.alias)).map((r) => r.label);
   if (missingHeadings.length) {
-    score -= Math.min(15, missingHeadings.length * 5);
-    penalties.push(`Bagian standar belum lengkap: ${missingHeadings.join(', ')} (-${Math.min(15, missingHeadings.length * 5)})`);
+    score -= Math.min(20, missingHeadings.length * 5);
+    penalties.push(`Bagian standar belum lengkap: ${missingHeadings.join(', ')} (-${Math.min(20, missingHeadings.length * 5)})`);
   }
   if ((meta.pages || 1) > 2) { score -= 10; penalties.push('Dokumen melebihi 2 halaman (-10)'); }
   if (meta.fonts && meta.fonts > 2) { score -= 10; penalties.push('Lebih dari 2 jenis font (-10)'); }
@@ -134,10 +140,15 @@ export function scoreFormat(cv, meta = {}) {
   const longBullets = (cv?.experience || []).flatMap((e) => e.bullets || []).filter((b) => b.length > 200).length;
   if (longBullets) { score -= 5; penalties.push(`${longBullets} bullet terlalu panjang (-5)`); }
   if (!(cv?.summary || '').trim()) { score -= 10; penalties.push('Ringkasan kosong (-10)'); }
+  // Bonus: dokumen punya seluruh bagian wajib + ringkasan → format rapi
+  if (!missingHeadings.length && (cv?.summary || '').trim() && !meta.tables && !(meta.columns > 1)) {
+    score = Math.min(100, score + 4);
+  }
   return {
     score: Math.max(0, Math.min(100, score)),
     note: 'Validator rule-based: satu kolom, heading standar, tanpa tabel/ikon, maks 2 halaman.',
     penalties,
+    missing_sections: missingHeadings,
   };
 }
 

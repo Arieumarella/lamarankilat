@@ -58,19 +58,35 @@ export async function chatJson({ prompt, templateKey, model, temperature = 0.2, 
     });
     if (!res.ok) {
       logger.warn('router9_http_error', { status: res.status, model: useModel });
+      recordUsage({ purpose: templateKey || 'chat', model: useModel, ok: 0, error: `http_${res.status}` });
       return null;
     }
     const data = await res.json();
     const text = data?.choices?.[0]?.message?.content || '';
     const json = extractJson(text);
     logger.info('router9_ok', { model: useModel, ms: Date.now() - started, chars: text.length });
+    recordUsage({
+      purpose: templateKey || 'chat',
+      model: useModel,
+      promptTokens: data?.usage?.prompt_tokens || 0,
+      outputTokens: data?.usage?.completion_tokens || 0,
+    });
     return json;
   } catch (err) {
     logger.warn('router9_failed', { error: String(err.message), model: useModel });
+    recordUsage({ purpose: templateKey || 'chat', model: useModel, ok: 0, error: String(err.message).slice(0, 160) });
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Catat pemakaian AI agar biaya token kelihatan di dashboard admin. */
+function recordUsage({ purpose, model, promptTokens = 0, outputTokens = 0, ok = 1, error = null }) {
+  try {
+    getDb().prepare(`INSERT INTO ai_usage (purpose, model, prompt_tokens, output_tokens, ok, error, created_at)
+      VALUES (?,?,?,?,?,?,?)`).run(String(purpose).slice(0, 60), model || null, promptTokens, outputTokens, ok, error, new Date().toISOString());
+  } catch { /* tabel belum ada pada DB lama */ }
 }
 
 export function extractJson(text) {

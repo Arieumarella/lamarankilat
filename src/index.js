@@ -14,6 +14,9 @@ import { handleIncoming } from './services/conversation.js';
 import { startWhatsApp, waState } from './services/wa/baileys.js';
 import { setTransport } from './services/wa/sender.js';
 import { audit } from './db.js';
+import { checkRouter9 } from './services/ai/router9.js';
+import { sendTelegram } from './services/alerts.js';
+import { maybeDailyBackup } from './services/backup.js';
 
 function buildApp() {
   const app = express();
@@ -60,7 +63,50 @@ function buildApp() {
   return app;
 }
 
+let lastAiAlert = 0;
+
+/**
+ * Cek koneksi AI (9Router). Simpan status di DB agar badge dashboard akurat,
+ * dan kirim satu alert Telegram saat status berubah jadi gagal.
+ */
+async function probeAi() {
+  const health = await checkRouter9();
+  let ok = Boolean(health.ok);
+  let detail = health.ok ? `HTTP ${health.status || 200}` : (health.reason || `HTTP ${health.status || '-'}`);
+  // /models bisa 401 walau key valid untuk chat; uji chat sekali bila perlu.
+  if (!ok && config.router9.apiKey) {
+    try {
+      const res = await fetch(`${config.router9.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + config.router9.apiKey },
+        body: JSON.stringify({
+          model: config.router9.modelPrimary,
+          max_tokens: 4,
+          messages: [{ role: 'user', content: 'ping' }],
+        }),
+      });
+      if (res.ok) { ok = true; detail = `chat ${res.status}`; }
+      else detail = `chat ${res.status}`;
+    } catch (err) {
+      detail = String(err.message).slice(0, 120);
+    }
+  }
+  const status = { ok, detail, at: new Date().toISOString(), models: health.status || null };
+  try {
+    getDb().prepare(`INSERT INTO app_settings (key, value, updated_at) VALUES ('ai_health', ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
+      .run(JSON.stringify(status), status.at);
+  } catch { /* settings table beda skema */ }
+  audit('system', ok ? 'ai_probe_ok' : 'ai_probe_failed', 'ai', config.router9.modelPrimary, { detail });
+  if (!ok && Date.now() - lastAiAlert > 3600 * 1000) {
+    lastAiAlert = Date.now();
+    await sendTelegram(`⚠️ AI (9Router) tidak aktif: ${detail}\nDokumen akan memakai template fallback sampai koneksi pulih.`);
+  }
+  return status;
+}
+
 async function main() {
+
   ensureDirs();
   migrate();
   registerAll();
@@ -87,6 +133,12 @@ async function main() {
   audit('system', 'server_started', 'server', String(config.port));
 
   startWorker();
+  maybeDailyBackup();
+  setInterval(() => { maybeDailyBackup(); }, 30 * 60 * 1000).unref();
+
+  // Probe 9Router saat boot: kalau mati, admin tahu sebelum pelanggan komplain.
+  probeAi().catch(() => {});
+  setInterval(() => { probeAi().catch(() => {}); }, 6 * 3600 * 1000).unref();
 
   if (config.wa.enabled) {
     try {

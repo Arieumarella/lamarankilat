@@ -10,6 +10,7 @@ import { createOrder, getOrder, transition, priceFor, PaymentNotConfiguredError 
 import { createPaymentForOrder, paymentInstructions, attachProof } from './payments.js';
 import { enqueue } from './jobs.js';
 import { bumpMetric } from './metrics.js';
+import { ensureReferralCode, attachReferrer, findUsable } from './discounts.js';
 
 const RATE_WINDOW_MS = 60 * 1000;
 const RATE_MAX = 10;
@@ -141,6 +142,24 @@ export async function handleIncoming({ waNumber, text, waMessageId = null, type 
 
   if (lower === 'status') {
     await sendStatus(number, customer, conv);
+    return { handled: true, state: conv.state };
+  }
+
+  // PAKAI <kode> — pasang kode referral / promo
+  const pakai = lower.match(/^(?:pakai|promo|kode)\s+([a-z0-9]{4,20})$/i);
+  if (pakai) {
+    const codeRaw = pakai[1].toUpperCase();
+    const res = attachReferrer(customer.id, codeRaw);
+    if (res.ok) {
+      await sendText(number, `Kode ${codeRaw} tersimpan. Potongan ${formatRupiah(res.discount?.value || config.referral.credit)} dipakai otomatis di order pertamamu.`);
+    } else {
+      const usable = findUsable(codeRaw, customer.id, config.price.bundle);
+      if (usable.discount) {
+        await sendText(number, `Kode ${codeRaw} aktif: potongan ${formatRupiah(usable.amount)} dipakai otomatis saat order.`);
+      } else {
+        await sendText(number, `Kode tidak bisa dipakai: ${usable.reason || res.reason}.`);
+      }
+    }
     return { handled: true, state: conv.state };
   }
 
@@ -310,11 +329,14 @@ export async function handleIncoming({ waNumber, text, waMessageId = null, type 
         }
         let order;
         try {
+          const autoCredit = findUsable(`REF${ensureReferralCode(customer.id)}`, customer.id, priceFor(nextCtx.product || 'cv'));
           order = createOrder({
             customerId: customer.id,
             product: nextCtx.product || 'cv',
             input: nextCtx.input,
             source: 'wa',
+            discountCode: nextCtx.discount_code || (autoCredit.discount ? autoCredit.discount.code : null),
+            template: nextCtx.template || 'ats',
           });
           transition(order.id, 'awaiting_payment', { via: 'conversation' }, `wa:${number}`);
           createPaymentForOrder({ ...order, status: 'awaiting_payment' });
@@ -414,8 +436,15 @@ export async function handleIncoming({ waNumber, text, waMessageId = null, type 
         }
         break;
       }
-      if (/referral|kode|ajak|teman/i.test(lower) || /kode/i.test(lower)) {
-        await reply(`Kode referral kamu: ${customer.referral_code}\nBagikan ke teman. Mereka dapat potongan Rp5.000, kamu juga Rp5.000 untuk order berikutnya.`);
+      if (/referral|kode|ajak|teman|promo/i.test(lower)) {
+        const code = ensureReferralCode(customer.id) || '-';
+        const usable = findUsable(`REF${code}`, customer.id, config.price.cv);
+        await reply([
+          `Kode referral kamu: ${code}`,
+          'Bagikan ke teman. Teman dapat potongan Rp5.000 di order pertama, kamu dapat Rp5.000 setelah ordernya dibayar.',
+          usable.discount ? `\nKamu punya potongan aktif: ${formatRupiah(usable.amount)} — dipakai otomatis di order berikutnya.` : '',
+          '\nPunya kode dari teman? Balas: PAKAI <kode>',
+        ].filter(Boolean).join('\n'));
         break;
       }
       if (/halo|hai|lagi|order|baru/i.test(lower)) {

@@ -15,9 +15,10 @@ function adminShell(title, bodyHtml, active = 'dash') {
     <a href="/admin" class="${active === 'dash' ? 'on' : ''}">Dashboard</a>
     <a href="/admin/orders" class="${active === 'orders' ? 'on' : ''}">Order</a>
     <a href="/admin/payments" class="${active === 'payments' ? 'on' : ''}">Pembayaran</a>
+    <a href="/admin/promo" class="${active === 'promo' ? 'on' : ''}">Promo</a>
     <a href="/admin/jobs" class="${active === 'jobs' ? 'on' : ''}">Queue</a>
     <a href="/admin/settings" class="${active === 'settings' ? 'on' : ''}">Sistem</a>
-    <a href="/simulator">Simulator</a>
+    ${config.simulator.enabled ? '<a href="/simulator">Simulator</a>' : ''}
     <a href="/admin/logout">Keluar</a>
   </div>
 </div></nav>
@@ -68,11 +69,13 @@ function sparkline(days) {
   <div class="row muted" style="justify-content:space-between;font-size:12px"><span>${escapeHtml(points[0].day)}</span><span>${escapeHtml(points[points.length - 1].day)}</span></div>`;
 }
 
-export function dashboardPage({ kpis, metrics, recent, unverified, deadJobs, wa, queue, router, disk, funnel }) {
+export function dashboardPage({ kpis, metrics, recent, unverified, deadJobs, wa, queue, router, disk, funnel, aiHealth = null, backup = null }) {
   const alerts = [];
   if (unverified.length) alerts.push(`<div class="alert warn">${unverified.length} pembayaran menunggu verifikasi. <a href="/admin/payments">Buka</a></div>`);
   if (deadJobs) alerts.push(`<div class="alert bad">${deadJobs} job gagal permanen di queue. <a href="/admin/jobs">Periksa</a></div>`);
   if (!router.ok) alerts.push(`<div class="alert warn">9Router tidak terhubung — dokumen akan memakai template deterministik. ${escapeHtml(router.error || '')}</div>`);
+  if (aiHealth && aiHealth.ok === false) alerts.push(`<div class="alert bad">Probe AI terakhir gagal: ${escapeHtml(aiHealth.detail || '-')} (${escapeHtml(String(aiHealth.at || '').slice(0, 16).replace('T', ' '))} UTC)</div>`);
+  if (backup && !backup.fresh) alerts.push(`<div class="alert warn">Belum ada backup database hari ini. Backup terakhir: ${escapeHtml(backup.latest || 'belum pernah')}. <a href="/admin/settings">Cek</a></div>`);
   if (!config.payment.bankAccount && !['qris_static', 'manual_confirm'].includes(config.payment.mode)) alerts.push('<div class="alert bad">Rekening bank belum diisi (BANK_ACCOUNT/BANK_HOLDER). Order baru akan ditolak.</div>');
 
   return adminShell('Dashboard', `
@@ -91,6 +94,8 @@ ${alerts.join('')}
     <ul class="list-clean">
       <li><span>WhatsApp gateway</span><span class="badge ${wa.status === 'connected' ? 'good' : wa.enabled ? 'warn' : ''}">${escapeHtml(wa.status)}</span></li>
       <li><span>9Router</span><span class="badge ${router.ok ? 'good' : 'bad'}">${router.ok ? 'terhubung' : 'offline'}</span></li>
+      <li><span>Backup DB</span><span class="badge ${backup && backup.fresh ? 'good' : 'warn'}">${backup && backup.latest ? escapeHtml(backup.latest) : 'belum ada'}</span></li>
+      <li><span>Auto-hapus data</span><span class="badge">${config.retentionDays} hari</span></li>
       <li><span>Disk data</span><span class="badge">${disk.mb} MB</span></li>
       <li><span>Pembayaran</span><span class="badge ${config.payment.bankAccount || config.payment.qrisImagePath ? 'good' : 'warn'}">${escapeHtml(config.payment.mode)}</span></li>
       <li><span>Versi</span><span class="badge">v${escapeHtml(config.version)}</span></li>
@@ -241,7 +246,58 @@ export function jobsPage({ jobs, queue }) {
 </table></div></div>`);
 }
 
-export function settingsPage({ wa, router, disk, counts, envInfo }) {
+export function promoPage({ rows = [], flash = {} }) {
+  const kindLabel = { fixed: 'nominal', percent: 'persen', referral: 'referral' };
+  return adminShell('Promo', `
+<h1 style="font-size:26px">Kode Promo &amp; Referral</h1>
+<p class="muted">Kode dipakai pelanggan dengan membalas <code class="mono">PAKAI &lt;kode&gt;</code> di WhatsApp.</p>
+${flash.ok ? `<div class="alert good">${escapeHtml(flash.ok)}</div>` : ''}
+${flash.err ? `<div class="alert bad">${escapeHtml(flash.err)}</div>` : ''}
+<div class="grid cols-2 mt">
+  <div class="card"><h3>Buat kode baru</h3>
+    <form method="post" action="/admin/promo" class="form-grid">
+      <label>Kode (kosongkan untuk otomatis <span class="mono">LK...</span>)
+        <input name="code" maxlength="20" placeholder="otomatis" autocomplete="off">
+      </label>
+      <label>Jenis
+        <select name="kind">
+          <option value="fixed">Potongan nominal (Rp)</option>
+          <option value="percent">Potongan persen (%)</option>
+        </select>
+      </label>
+      <label>Nilai <input name="value" type="number" min="1" required value="5000"></label>
+      <label>Kuota pemakaian (0 = tanpa batas) <input name="maxUses" type="number" min="0" value="0"></label>
+      <label>Maks per pelanggan <input name="perCustomer" type="number" min="1" value="1"></label>
+      <label>Berlaku (hari, 0 = tanpa batas) <input name="days" type="number" min="0" value="30"></label>
+      <button class="btn">Buat kode</button>
+    </form>
+  </div>
+  <div class="card"><h3>Cara kerja</h3>
+    <ul class="list-clean">
+      <li><span>Pemakaian</span><span class="mono">PAKAI HEMAT5</span></li>
+      <li><span>Referral pelanggan</span><span class="mono">PAKAI REF&lt;kode&gt;</span></li>
+      <li><span>Kredit referral</span><span>${formatRupiah(config.referral.credit)} setelah order teman lunas</span></li>
+      <li><span>Maks potongan</span><span>${config.referral.maxSharePct}% dari harga</span></li>
+      <li><span>Stacking</span><span>1 kode per order</span></li>
+    </ul>
+  </div>
+</div>
+<div class="card mt"><h3>Daftar kode (${rows.length})</h3>
+${rows.length ? `<div class="table-wrap"><table>
+<thead><tr><th>Kode</th><th>Jenis</th><th>Nilai</th><th>Dipakai</th><th>Kuota</th><th>Status</th><th></th></tr></thead>
+<tbody>${rows.map((d) => `<tr>
+  <td class="mono">${escapeHtml(d.code)}</td>
+  <td>${escapeHtml(kindLabel[d.kind] || d.kind)}</td>
+  <td>${d.kind === 'percent' ? `${d.value}%` : formatRupiah(d.value)}</td>
+  <td>${d.used_count}${d.per_customer ? ` (maks ${d.per_customer}/pelanggan)` : ''}</td>
+  <td>${d.max_uses ? d.max_uses : '∞'}</td>
+  <td><span class="badge ${d.active ? 'good' : ''}">${d.active ? 'aktif' : 'nonaktif'}</span></td>
+  <td>${d.active ? `<form method="post" action="/admin/promo/${d.id}/off"><button class="btn ghost sm">Nonaktifkan</button></form>` : ''}</td>
+</tr>`).join('')}</tbody></table></div>` : '<p class="muted">Belum ada kode promo.</p>'}
+</div>`);
+}
+
+export function settingsPage({ wa, router, disk, counts, envInfo, backup = null }) {
   return adminShell('Sistem', `
 <h1 style="font-size:26px">Sistem</h1>
 <p class="muted">Status runtime dan konfigurasi yang aman ditampilkan (tanpa rahasia).</p>
@@ -274,8 +330,10 @@ export function settingsPage({ wa, router, disk, counts, envInfo }) {
       <li><span>Dokumen</span><span>${counts.documents}</span></li>
       <li><span>Pesan WA</span><span>${counts.messages}</span></li>
       <li><span>Disk</span><span>${disk.mb} MB</span></li>
+      <li><span>Backup terakhir</span><span class="mono">${escapeHtml(backup?.latest || 'belum ada')}${backup?.bytes ? ` · ${Math.round(backup.bytes / 1024)} KB` : ''}</span></li>
     </ul>
     <form method="post" action="/admin/settings/cleanup" class="mt" onsubmit="return confirm('Hapus artefak kedaluwarsa sekarang?')"><button class="btn ghost">Bersihkan data kedaluwarsa</button></form>
+    <form method="post" action="/admin/settings/backup" class="mt" onsubmit="return confirm('Jalankan backup database sekarang?')"><button class="btn ghost">Backup database sekarang</button></form>
   </div>
   <div class="card"><h3>Konfigurasi</h3>
     <ul class="list-clean">

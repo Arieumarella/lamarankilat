@@ -3,6 +3,8 @@ import { getDb, audit } from '../db.js';
 import { config, paymentConfigured } from '../config.js';
 import { nowIso, formatRupiah } from '../util.js';
 import { transition, getOrder } from './orders.js';
+import { creditReferrer } from './discounts.js';
+import { logger } from '../logger.js';
 
 /** Nominal unik = harga + 3 digit (001–999) yang belum dipakai 24 jam terakhir. */
 export function reserveUniqueAmount(price) {
@@ -111,6 +113,15 @@ export function approvePayment(paymentId, actor = 'admin') {
   db.prepare("UPDATE orders SET payment_status = 'paid', paid_at = ? WHERE id = ?")
     .run(nowIso(), payment.order_id);
   audit(actor, 'payment_approved', 'payment', paymentId, { order_id: payment.order_id, amount: payment.amount });
+
+  // Kredit referral: hanya saat order pertama teman lunas.
+  try {
+    const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(payment.order_id);
+    if (order) creditReferrer(order.customer_id);
+  } catch (err) {
+    logger.warn('referral_credit_failed', { order: payment.order_id, error: String(err.message) });
+  }
+
   return db.prepare('SELECT * FROM payments WHERE id = ?').get(paymentId);
 }
 

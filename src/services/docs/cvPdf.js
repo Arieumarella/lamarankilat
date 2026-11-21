@@ -6,6 +6,34 @@ import { resolveFonts, COLOR } from './fonts.js';
 const A4 = { width: 595.28, height: 841.89 };
 const MARGIN = 51; // 1.8 cm
 
+/** Tema visual CV. Semua tetap satu kolom & tanpa tabel (ATS-safe). */
+export const THEMES = {
+  ats: { brand: COLOR.brand, accent: COLOR.accent, titleSize: 10.5, nameSize: 21, bodySize: 9.8, rule: 0.6 },
+  modern: { brand: '#0f766e', accent: '#0ea5e9', titleSize: 11, nameSize: 23, bodySize: 9.9, rule: 0.8 },
+  executive: { brand: '#1f2937', accent: '#7c2d12', titleSize: 10, nameSize: 20, bodySize: 9.7, rule: 1.4 },
+};
+
+export function resolveTheme(name) {
+  return THEMES[String(name || 'ats')] || THEMES.ats;
+}
+
+function watermark(doc, text) {
+  const range = doc.bufferedPageRange();
+  for (let i = 0; i < range.count; i += 1) {
+    doc.switchToPage(range.start + i);
+    doc.save();
+    doc.rotate(-32, { origin: [doc.page.width / 2, doc.page.height / 2] });
+    doc.fontSize(46).fillColor('#cbd5e1').opacity(0.35);
+    doc.text(text, 40, doc.page.height / 2 - 30, { width: doc.page.width - 80, align: 'center' });
+    doc.restore();
+    doc.opacity(1);
+    doc.switchToPage(range.start + i);
+    const bottom = doc.page.height - 45;
+    doc.page.margins.bottom = 0;
+    doc.fontSize(7.4).fillColor('#94a3b8').text(text, MARGIN, bottom, { width: doc.page.width - MARGIN * 2, align: 'center' });
+  }
+}
+
 function applyFonts(doc) {
   const fonts = resolveFonts();
   if (fonts.regular) doc.registerFont('Body', fonts.regular);
@@ -39,10 +67,11 @@ function sectionTitle(doc, text, meta) {
   if (doc.y > bottom - 120) doc.addPage();
   doc.x = MARGIN;
   doc.moveDown(0.55);
-  font(doc, meta.hasBold ? 'BodyBold' : 'Helvetica-Bold', 10.5).fillColor(COLOR.brand).text(text.toUpperCase(), { characterSpacing: 0.6 });
+  const theme = meta.theme || THEMES.ats;
+  font(doc, meta.hasBold ? 'BodyBold' : 'Helvetica-Bold', theme.titleSize).fillColor(theme.brand).text(text.toUpperCase(), { characterSpacing: 0.6 });
   doc.moveDown(0.2);
   const y = doc.y;
-  doc.moveTo(MARGIN, y).lineTo(doc.page.width - MARGIN, y).lineWidth(0.6).strokeColor(COLOR.line).stroke();
+  doc.moveTo(MARGIN, y).lineTo(doc.page.width - MARGIN, y).lineWidth(theme.rule).strokeColor(COLOR.line).stroke();
   doc.moveDown(0.45);
 }
 
@@ -57,19 +86,25 @@ function bullet(doc, text, meta) {
 
 /**
  * Render CV ATS-safe: satu kolom, tanpa tabel/gambar/ikon.
+ * @param {object} cv data CV terstruktur
+ * @param {string} outPath target file PDF
+ * @param {{template?:string, watermark?:string, scale?:number}} [opts]
  * @returns {Promise<{path:string, bytes:number, pages:number}>}
  */
-export async function renderCvPdf(cv, outPath) {
+export async function renderCvPdf(cv, outPath, opts = {}) {
+  const theme = resolveTheme(opts.template);
   const doc = new PDFDocument({
     size: 'A4',
     margins: { top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN },
     info: { Title: `CV — ${cv.header?.name || ''}`, Author: cv.header?.name || '', Producer: 'LamaranKilat', Creator: 'LamaranKilat' },
     bufferPages: true,
+    ...(opts.scale ? { pdfVersion: '1.3' } : {}),
   });
-  const meta = applyFonts(doc);
+  const meta = { ...applyFonts(doc), theme };
+
 
   const h = cv.header || {};
-  font(doc, meta.hasBold ? 'BodyBold' : 'Helvetica-Bold', 21).fillColor(COLOR.ink).text(h.name || '', { align: 'left' });
+  font(doc, meta.hasBold ? 'BodyBold' : 'Helvetica-Bold', theme.nameSize).fillColor(COLOR.ink).text(h.name || '', { align: 'left' });
   if (h.headline) {
     doc.moveDown(0.15);
     font(doc, meta.hasRegular ? 'Body' : 'Helvetica', 11).fillColor(COLOR.brand).text(h.headline, { lineGap: 1 });
@@ -134,6 +169,34 @@ export async function renderCvPdf(cv, outPath) {
     doc.page.margins.bottom = 0;
     font(doc, meta.hasRegular ? 'Body' : 'Helvetica', 7.4).fillColor('#9ca3af')
       .text(`${h.name || ''} — halaman ${i + 1} dari ${pages}`, MARGIN, bottom, { width: doc.page.width - MARGIN * 2, align: 'right' });
+  }
+
+  if (opts.watermarkLabel) {
+    const label = String(opts.watermarkLabel).slice(0, 120);
+    const pagesTotal = doc.bufferedPageRange();
+    for (let i = 0; i < pagesTotal.count; i += 1) {
+      doc.switchToPage(pagesTotal.start + i);
+      doc.save();
+      doc.rotate(-32, { origin: [doc.page.width / 2, doc.page.height / 2] });
+      doc.fontSize(46).fillColor('#cbd5e1').opacity(0.3);
+      doc.text(label, 40, doc.page.height / 2 - 30, { width: doc.page.width - 80, align: 'center' });
+      doc.restore();
+      doc.opacity(1);
+      doc.switchToPage(pagesTotal.start + i);
+      doc.page.margins.bottom = 0;
+      font(doc, meta.hasRegular ? 'Body' : 'Helvetica', 7).fillColor('#94a3b8')
+        .text(label, MARGIN, doc.page.height - 45, { width: doc.page.width - MARGIN * 2, align: 'center' });
+    }
+  }
+
+  if (opts.watermark) {
+    const r2 = doc.bufferedPageRange();
+    for (let i = 0; i < r2.count; i += 1) {
+      doc.switchToPage(r2.start + i);
+      doc.page.margins.bottom = 0;
+      font(doc, meta.hasRegular ? 'Body' : 'Helvetica', 7).fillColor('#94a3b8')
+        .text(opts.watermark, MARGIN, doc.page.height - 45, { width: doc.page.width - MARGIN * 2, align: 'center' });
+    }
   }
 
   const result = await finish(doc, outPath);

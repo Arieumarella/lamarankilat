@@ -8,6 +8,7 @@ import { normalizePhone, isValidPhone, nowIso } from '../util.js';
 import { handleIncoming, startConversation } from '../services/conversation.js';
 import { listMessages, conversationList } from '../services/wa/sender.js';
 import { findByNumber } from '../services/customers.js';
+import { readSession } from './auth.js';
 
 const PNG_1PX = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
@@ -20,8 +21,16 @@ function phoneGuard(raw) {
   return phone;
 }
 
+/** Simulator memakai jalur order asli — wajib login admin walau di dev. */
+function simGuard(req, res, next) {
+  if (!config.simulator.enabled) return res.status(404).json({ error: 'not found' });
+  if (!readSession(req)) return res.status(401).json({ error: 'unauthorized' });
+  return next();
+}
+
 export function simulatorRoutes() {
   const r = Router();
+  r.use('/api/sim', simGuard);
 
   r.post('/api/sim/start', async (req, res, next) => {
     try {

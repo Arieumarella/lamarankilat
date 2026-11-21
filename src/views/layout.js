@@ -2,6 +2,10 @@ import { escapeHtml } from '../util.js';
 import { config } from '../config.js';
 
 export function layout({ title, body, active = '', description = 'CV & surat lamaran siap ATS dalam 15 menit lewat WhatsApp.', admin = false }) {
+  const simNav = config.simulator.enabled
+    ? `<a href="/simulator" class="${active === 'sim' ? 'on' : ''}">Simulator</a>`
+    : '';
+  const simFoot = config.simulator.enabled ? '<a href="/simulator">Simulator WA</a>' : '';
   const nav = admin ? '' : `
     <nav class="nav"><div class="wrap nav-inner">
       <a class="brand" href="/"><span class="dot">LK</span> LamaranKilat</a>
@@ -9,10 +13,11 @@ export function layout({ title, body, active = '', description = 'CV & surat lam
         <a href="/#cara-kerja" class="${active === 'cara' ? 'on' : ''}">Cara kerja</a>
         <a href="/#harga" class="${active === 'harga' ? 'on' : ''}">Harga</a>
         <a href="/cek-ats" class="${active === 'ats' ? 'on' : ''}">Cek Skor ATS</a>
-        <a href="/simulator" class="${active === 'sim' ? 'on' : ''}">Simulator</a>
+        ${simNav}
         <a href="/admin" class="${active === 'admin' ? 'on' : ''}">Admin</a>
       </div>
     </div></nav>`;
+
 
   return `<!doctype html>
 <html lang="id">
@@ -30,7 +35,7 @@ ${nav}
 ${body}
 <footer class="footer"><div class="wrap between">
   <div>© ${new Date().getFullYear()} LamaranKilat · v${escapeHtml(config.version)} · dibuat untuk pencari kerja Indonesia</div>
-  <div class="row"><a href="/cek-ats">Cek ATS gratis</a><a href="/simulator">Simulator WA</a><a href="/admin">Admin</a></div>
+  <div class="row"><a href="/cek-ats">Cek ATS gratis</a>${simFoot}<a href="/privasi">Privasi</a><a href="/syarat">Syarat</a><a href="/refund">Refund</a><a href="/admin">Admin</a></div>
 </div></footer>
 </body></html>`;
 }

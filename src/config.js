@@ -29,8 +29,39 @@ export const config = {
   artefactDir: env.ARTEFACT_DIR || path.join(dataRoot, 'artefacts'),
   mediaDir: env.MEDIA_DIR || path.join(dataRoot, 'media'),
   logDir: env.LOG_DIR || path.join(dataRoot, 'logs'),
+  backupDir: env.BACKUP_DIR || path.join(dataRoot, 'backup'),
   artefactTtlDays: int(env.ARTEFACT_TTL_DAYS, 30),
   dataRetentionDays: int(env.DATA_RETENTION_DAYS, 30),
+  retentionDays: int(env.DATA_RETENTION_DAYS, 30),
+  contactEmail: env.CONTACT_EMAIL || 'halo@lamarankilat.id',
+
+  // /simulator hanya untuk pengembangan. Di production harus opt-in eksplisit.
+  simulator: {
+    enabled: bool(env.SIMULATOR_ENABLED, (env.NODE_ENV || 'development') !== 'production'),
+  },
+
+  backup: {
+    enabled: bool(env.BACKUP_ENABLED, true),
+    keepDays: int(env.BACKUP_KEEP_DAYS, 14),
+    hour: int(env.BACKUP_HOUR, 3),
+  },
+
+  login: {
+    maxFails: int(env.ADMIN_LOGIN_MAX_FAILS, 5),
+    lockMinutes: int(env.ADMIN_LOGIN_LOCK_MINUTES, 15),
+  },
+
+  preview: {
+    watermark: bool(env.PREVIEW_WATERMARK, true),
+    maxPerDay: int(env.PREVIEW_MAX_PER_DAY, 6),
+  },
+
+  referral: {
+    credit: int(env.REFERRAL_CREDIT, 5000),
+    maxSharePct: int(env.REFERRAL_MAX_SHARE_PCT, 50),
+  },
+
+  templates: (env.CV_TEMPLATES || 'ats,modern,executive').split(',').map((s) => s.trim()).filter(Boolean),
 
   admin: { user: env.ADMIN_USER || 'admin', pass: env.ADMIN_PASS || '' },
 
@@ -84,6 +115,7 @@ export function ensureDirs() {
     config.artefactDir,
     config.mediaDir,
     config.logDir,
+    config.backupDir,
     config.wa.sessionDir,
   ]) {
     fs.mkdirSync(dir, { recursive: true });

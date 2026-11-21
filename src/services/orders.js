@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { getDb, audit } from '../db.js';
 import { config, paymentConfigured } from '../config.js';
 import { nowIso, addDaysIso, formatRupiah } from '../util.js';
+import { applyDiscount, ensureReferralCode } from './discounts.js';
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -44,21 +45,31 @@ export function priceFor(product) {
   return config.price.cv;
 }
 
-export function createOrder({ customerId, product, input, source = 'wa', campaign = null, parentOrderId = null }) {
+export function createOrder({ customerId, product, input, source = 'wa', campaign = null, parentOrderId = null, discountCode = null, template = 'ats' }) {
   if (!['cv', 'bundle', 'revision'].includes(product)) throw new Error('produk tidak dikenal');
   if (!paymentConfigured()) throw new PaymentNotConfiguredError();
   const db = getDb();
-  const price = priceFor(product);
+  const listPrice = priceFor(product);
   const code = orderCode();
+  const safeTemplate = config.templates.includes(template) ? template : 'ats';
   const info = db.prepare(`
     INSERT INTO orders (code, customer_id, product, price, status, payment_status, source, campaign,
-      input_json, created_at, expires_at, notes, revision_count)
-    VALUES (?,?,?,?, 'draft', 'pending', ?, ?, ?, ?, ?, ?, ?)
-  `).run(code, customerId, product, price, source, campaign, JSON.stringify(input || {}),
+      input_json, created_at, expires_at, notes, revision_count, template)
+    VALUES (?,?,?,?, 'draft', 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(code, customerId, product, listPrice, source, campaign, JSON.stringify(input || {}),
     nowIso(), addDaysIso(config.artefactTtlDays), parentOrderId ? JSON.stringify({ parent_order_id: parentOrderId }) : null,
-    parentOrderId ? 1 : 0);
-  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(info.lastInsertRowid);
-  audit('system', 'order_created', 'order', order.id, { code, product, price });
+    parentOrderId ? 1 : 0, safeTemplate);
+  let order = db.prepare('SELECT * FROM orders WHERE id = ?').get(info.lastInsertRowid);
+
+  let discount = { applied: false, amount: 0 };
+  if (discountCode && product !== 'revision') {
+    discount = applyDiscount({ discountCode, customerId, orderId: order.id, price: listPrice });
+    if (discount.applied) order = db.prepare('SELECT * FROM orders WHERE id = ?').get(order.id);
+  }
+
+  audit('system', 'order_created', 'order', order.id, {
+    code, product, price: order.price, listPrice, discount: discount.amount || 0, template: safeTemplate,
+  });
   return order;
 }
 

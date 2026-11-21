@@ -60,6 +60,20 @@ registerHandler('deliver_order', async ({ order_id: orderId, version = 1 }) => {
     await sendDocument(customer.wa_number, doc.path, docName(doc.path, order.code), mime);
   }
 
+  // Portal unduh ulang: token berlaku 30 hari, hanya hash yang disimpan.
+  try {
+    const { issuePortalToken, portalUrl } = await import('../services/access.js');
+    const { token, expiresAt } = issuePortalToken(orderId, { days: 30 });
+    await sendText(customer.wa_number, [
+      'Link simpanan (bisa unduh ulang kapan saja):',
+      portalUrl(order.code, token),
+      '',
+      `Berlaku sampai ${String(expiresAt).slice(0, 10)}. Jangan bagikan link ini.`,
+    ].join('\n'));
+  } catch (err) {
+    logger.warn('portal_token_failed', { order: orderId, error: String(err.message) });
+  }
+
   const rel = (() => { try { return JSON.parse(order.notes || 'null'); } catch { return null; } })();
   if (rel?.parent_order_id) {
     getDb().prepare('UPDATE orders SET status = ? WHERE id = ?').run('closed', rel.parent_order_id);

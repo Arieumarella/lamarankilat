@@ -4,14 +4,15 @@ import { config } from '../config.js';
 import { getDb, audit } from '../db.js';
 import { logger } from '../logger.js';
 import { verifyPassword, hashPassword } from '../migrate.js';
-import { requireAdmin, sameOrigin, issueSession, setSessionCookie, clearSessionCookie } from './auth.js';
-import { loginPage, dashboardPage, ordersPage, orderPage, paymentsPage, jobsPage, settingsPage } from '../views/admin.js';
+import { requireAdmin, sameOrigin, issueSession, setSessionCookie, clearSessionCookie, clientIp, loginLockRemaining, recordLoginAttempt } from './auth.js';
+import { loginPage, dashboardPage, ordersPage, orderPage, paymentsPage, jobsPage, settingsPage, promoPage } from '../views/admin.js';
 import { listOrders, getOrder, orderInput, orderDocuments, transition, statusLabel, revenueSummary } from '../services/orders.js';
 import { pendingPayments, refundPayment } from '../services/payments.js';
 import { startFulfillment } from '../services/fulfillment.js';
 import { recentJobs, queueStats, retryJob, enqueue } from '../services/jobs.js';
 import { metricsRange, funnel } from '../services/metrics.js';
 import { diskUsage, cleanupExpiredArtefacts, expireStaleOrders } from '../services/retention.js';
+import { listDiscounts, createPromo, deactivateDiscount } from '../services/discounts.js';
 import { waState } from '../services/wa/baileys.js';
 import { checkRouter9 } from '../services/ai/router9.js';
 import { formatWIB } from '../util.js';
@@ -44,6 +45,12 @@ export function adminRoutes() {
       const router = await checkRouter9();
       const recent = listOrders({ limit: 8 }).rows;
       const wa = waState();
+      let aiHealth = null;
+      try {
+        const row = db.prepare("SELECT value, updated_at FROM app_settings WHERE key = 'ai_health'").get();
+        if (row) aiHealth = { ...JSON.parse(row.value), updated_at: row.updated_at };
+      } catch { aiHealth = null; }
+      const { backupStatus } = await import('../services/backup.js');
       res.type('html').send(dashboardPage({
         kpis: { ordersToday: today.c, ordersTotal: total.c, revenueToday: today.revenue, revenueTotal: rev.revenue },
         metrics: metricsRange(14),
@@ -53,6 +60,8 @@ export function adminRoutes() {
         wa,
         queue,
         router,
+        aiHealth,
+        backup: backupStatus(),
         disk: diskUsage(),
         funnel: funnel(),
       }));
@@ -60,14 +69,23 @@ export function adminRoutes() {
   });
 
   r.post('/admin/login', (req, res) => {
+    const ip = clientIp(req);
+    const locked = loginLockRemaining(ip);
+    if (locked > 0) {
+      const mins = Math.ceil(locked / 60000);
+      audit('anonymous', 'admin_login_locked', 'admin', { ip, mins });
+      return res.status(429).type('html').send(loginPage(`Terlalu banyak percobaan gagal. Coba lagi dalam ${mins} menit.`));
+    }
     const { username, password } = req.body || {};
     const admin = getDb().prepare('SELECT * FROM admins WHERE username = ?').get(String(username || '').trim());
     if (!admin || !verifyPassword(String(password || ''), admin.password_hash)) {
-      audit('anonymous', 'admin_login_failed', 'admin', username || null);
+      recordLoginAttempt(ip, username, false);
+      audit('anonymous', 'admin_login_failed', 'admin', username || null, { ip });
       return res.status(401).type('html').send(loginPage('Username atau password salah.'));
     }
+    recordLoginAttempt(ip, username, true);
     setSessionCookie(res, issueSession(admin.username));
-    audit(`admin:${admin.username}`, 'admin_login', 'admin', admin.id);
+    audit(`admin:${admin.username}`, 'admin_login', 'admin', admin.id, { ip });
     res.redirect('/admin');
   });
 
@@ -252,6 +270,7 @@ export function adminRoutes() {
       ];
       res.type('html').send(settingsPage({
         wa: waState(), router: await checkRouter9(), disk: diskUsage(), counts, envInfo,
+        backup: (await import('../services/backup.js')).backupStatus(),
       }));
     } catch (err) { next(err); }
   });
@@ -259,6 +278,43 @@ export function adminRoutes() {
   r.post('/admin/settings/cleanup', (req, res) => {
     const cleaned = cleanupExpiredArtefacts();
     flash(res, 'ok', `${cleaned} artefak kedaluwarsa dibersihkan.`);
+  });
+
+  r.post('/admin/settings/backup', async (req, res) => {
+    try {
+      const { runBackup } = await import('../services/backup.js');
+      const result = runBackup({ force: true });
+      if (result.ok) flash(res, 'ok', `Backup selesai: ${result.file.split('/').pop()} (${Math.round(result.bytes / 1024)} KB).`);
+      else flash(res, 'ok', result.reason === 'exists' ? 'Backup hari ini sudah ada.' : 'Backup dilewati.');
+    } catch (err) {
+      logger.error('backup_manual_failed', { error: String(err.message) });
+      flash(res, 'err', `Backup gagal: ${err.message}`);
+    }
+  });
+
+  r.get('/admin/promo', (req, res, next) => {
+    try {
+      res.type('html').send(promoPage({ rows: listDiscounts({ limit: 200 }), flash: req.query }));
+    } catch (err) { next(err); }
+  });
+
+  r.post('/admin/promo', (req, res) => {
+    try {
+      const { code, kind, value, maxUses, perCustomer, minPrice, days } = req.body || {};
+      const expiresAt = Number(days) > 0 ? new Date(Date.now() + Number(days) * 86400000).toISOString() : null;
+      const created = createPromo({
+        code, kind, value: Number(value), maxUses: Number(maxUses || 0),
+        perCustomer: Number(perCustomer || 1), minPrice: Number(minPrice || 0), expiresAt,
+      });
+      audit(`admin:${req.admin.u}`, 'promo_created', 'discount', created.id, { code: created.code });
+      flash(res, 'ok', `Kode ${created.code} dibuat.`);
+    } catch (err) { flash(res, 'err', err.message); }
+  });
+
+  r.post('/admin/promo/:id/off', (req, res) => {
+    deactivateDiscount(Number(req.params.id));
+    audit(`admin:${req.admin.u}`, 'promo_deactivated', 'discount', Number(req.params.id));
+    flash(res, 'ok', 'Kode promo dinonaktifkan.');
   });
 
   r.post('/admin/settings/password', (req, res) => {

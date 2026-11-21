@@ -9,6 +9,10 @@ import { layout } from '../views/layout.js';
 import { scoreRawText, bandLabel } from '../services/quickScore.js';
 import { router9Available } from '../services/ai/router9.js';
 import { queueStats } from '../services/jobs.js';
+import { portalPage, legalPage } from '../views/portal.js';
+import { orderForToken, latestDocuments } from '../services/access.js';
+import { getOrder } from '../services/orders.js';
+import { getDb } from '../db.js';
 
 const hits = new Map();
 
@@ -23,6 +27,13 @@ function rateLimit(ip, max = 30, windowMs = 3600 * 1000) {
 export function publicRoutes() {
   const r = Router();
 
+  const KIND_TITLES = {
+    cv_pdf: 'CV (PDF)', cv_docx: 'CV (Word)', letter_pdf: 'Surat Lamaran',
+    linkedin_txt: 'Teks LinkedIn', score_pdf: 'Laporan Skor ATS',
+  };
+  const kindTitle = (kind) => KIND_TITLES[kind] || kind;
+  const safeSize = (file) => { try { return fs.statSync(file).size; } catch { return 0; } };
+
   r.get('/', (req, res) => {
     res.type('html').send(layout({ title: 'CV ATS dalam 15 menit', body: landingPage(), active: 'home' }));
   });
@@ -36,7 +47,8 @@ export function publicRoutes() {
     }));
   });
 
-  r.get('/simulator', (req, res) => {
+  r.get('/simulator', (req, res, next) => {
+    if (!config.simulator.enabled) return next();
     res.type('html').send(layout({
       title: 'Simulator WhatsApp',
       description: 'Coba alur pemesanan LamaranKilat tanpa nomor WhatsApp asli.',
@@ -46,6 +58,11 @@ export function publicRoutes() {
   });
 
   r.get('/health', (req, res) => {
+    let ai = null;
+    try {
+      const row = getDb().prepare("SELECT value FROM app_settings WHERE key = 'ai_health'").get();
+      ai = row ? JSON.parse(row.value) : null;
+    } catch { ai = null; }
     res.json({
       ok: true,
       version: config.version,
@@ -53,6 +70,7 @@ export function publicRoutes() {
       env: config.env,
       queue: queueStats(),
       router9: router9Available(),
+      ai,
       ts: new Date().toISOString(),
     });
   });
@@ -98,9 +116,60 @@ export function publicRoutes() {
   });
 
   r.get('/download/:file', (req, res) => {
-    // endpoint legacy tidak dipakai; dokumen dikirim via WhatsApp & admin
+    // endpoint legacy: diganti portal bertoken /pesanan/<kode>
     res.status(404).type('text/plain').send('not found');
   });
+
+  // ---- portal pesanan (unduh ulang bertoken) ----
+  r.get('/pesanan/:code', (req, res) => {
+    const token = String(req.query.t || '');
+    const order = orderForToken(token);
+    if (!order || order.code !== req.params.code) {
+      return res.status(404).type('html').send(layout({
+        title: 'Pesanan tidak ditemukan',
+        body: `<section class="narrow" style="padding:56px 0">
+          <h1 style="font-size:28px">Link tidak valid atau kedaluwarsa</h1>
+          <p class="muted">Minta link baru dengan membalas <strong>STATUS</strong> di WhatsApp. Link berlaku 30 hari.</p>
+          <p><a class="btn" href="/">Kembali ke beranda</a></p>
+        </section>`,
+        active: '',
+      }));
+    }
+    const docs = latestDocuments(order.id).map((doc) => ({
+      ...doc,
+      title: kindTitle(doc.kind),
+      bytes: doc.bytes || safeSize(doc.path),
+    }));
+    res.type('html').send(layout({
+      title: `Pesanan ${order.code}`,
+      description: 'Unduh dokumen CV & surat lamaran kamu.',
+      body: portalPage({ order, docs, token }),
+      active: '',
+    }));
+  });
+
+  r.get('/pesanan/:code/file/:id', (req, res) => {
+    const order = orderForToken(String(req.query.t || ''));
+    if (!order || order.code !== req.params.code) return res.status(404).type('text/plain').send('not found');
+    const doc = getDb().prepare('SELECT * FROM documents WHERE id = ? AND order_id = ? AND deleted_at IS NULL')
+      .get(Number(req.params.id), order.id);
+    if (!doc || !fs.existsSync(doc.path)) return res.status(404).type('text/plain').send('not found');
+    const base = path.basename(doc.path);
+    const mime = base.endsWith('.docx')
+      ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      : base.endsWith('.txt') ? 'text/plain; charset=utf-8' : 'application/pdf';
+    res.type(mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${base.replace(/"/g, '')}"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    fs.createReadStream(doc.path).pipe(res);
+  });
+
+  // ---- halaman legal ----
+  for (const [slug, kind] of [['privasi', 'privasi'], ['syarat', 'syarat'], ['refund', 'refund']]) {
+    r.get(`/${slug}`, (req, res) => {
+      res.type('html').send(layout({ title: legalPage(kind).match(/<h1[^>]*>([^<]+)</)?.[1] || slug, body: legalPage(kind), active: '' }));
+    });
+  }
 
   r.get('/assets/:file', (req, res, next) => {
     const safe = path.basename(req.params.file);

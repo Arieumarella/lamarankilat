@@ -126,7 +126,7 @@ export async function generateOrderDocuments(orderId, { revisionNote = null, ver
   const docs = [];
 
   const cvPdfPath = path.join(dir, names.cvPdf);
-  await renderCvPdf(cv, cvPdfPath);
+  await renderCvPdf(cv, cvPdfPath, { template: order.template || 'ats' });
   docs.push(await record({ orderId, kind: 'cv_pdf', file: cvPdfPath, label: 'CV PDF', title: 'CV (PDF)' }, { code: order.code, version }));
 
   const cvDocxPath = path.join(dir, names.cvDocx);
