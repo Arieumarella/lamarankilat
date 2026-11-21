@@ -292,6 +292,15 @@ export function adminRoutes() {
     }
   });
 
+  r.post('/admin/settings/recover', async (req, res) => {
+    try {
+      const { recoverStuckOrders } = await import('../services/recovery.js');
+      const result = recoverStuckOrders();
+      audit(`admin:${req.admin.u}`, 'orders_recover_manual', 'order', null, result);
+      flash(res, 'ok', result.requeued ? `${result.requeued} order dijadwalkan ulang: ${result.orders.join(', ')}` : 'Tidak ada order tertahan.');
+    } catch (err) { flash(res, 'err', String(err.message)); }
+  });
+
   r.get('/admin/promo', (req, res, next) => {
     try {
       res.type('html').send(promoPage({ rows: listDiscounts({ limit: 200 }), flash: req.query }));

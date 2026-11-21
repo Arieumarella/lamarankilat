@@ -37,8 +37,16 @@ export async function runJob(job) {
   const db = getDb();
   const fn = handlers.get(job.type);
   if (!fn) {
-    db.prepare("UPDATE jobs SET status = 'dead', last_error = ?, updated_at = ? WHERE id = ?")
-      .run(`no handler for ${job.type}`, nowIso(), job.id);
+    // Handler bisa belum terdaftar saat boot (registerAll async). Jangan buang job
+    // berbayar: tunda dan coba lagi, baru matikan setelah 5 percobaan.
+    const attempts = job.attempts + 1;
+    const dead = attempts >= 5;
+    db.prepare(`
+      UPDATE jobs SET status = ?, attempts = ?, last_error = ?, run_after = ?, updated_at = ?, locked_at = NULL
+      WHERE id = ?
+    `).run(dead ? 'dead' : 'queued', attempts, `no handler for ${job.type}`,
+      new Date(Date.now() + 2000).toISOString(), nowIso(), job.id);
+    logger.error('job_no_handler', { id: job.id, type: job.type, attempts, dead });
     return false;
   }
   try {

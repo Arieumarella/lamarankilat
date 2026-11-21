@@ -17,6 +17,7 @@ import { audit } from './db.js';
 import { checkRouter9 } from './services/ai/router9.js';
 import { sendTelegram } from './services/alerts.js';
 import { maybeDailyBackup } from './services/backup.js';
+import { startRecoveryLoop, recoverStuckOrders } from './services/recovery.js';
 
 function buildApp() {
   const app = express();
@@ -109,7 +110,7 @@ async function main() {
 
   ensureDirs();
   migrate();
-  registerAll();
+  await registerAll();
 
   const app = buildApp();
   const server = http.createServer(app);
@@ -135,6 +136,8 @@ async function main() {
   startWorker();
   maybeDailyBackup();
   setInterval(() => { maybeDailyBackup(); }, 30 * 60 * 1000).unref();
+  try { recoverStuckOrders(); } catch (err) { logger.error('recovery_boot_failed', { error: String(err.message) }); }
+  startRecoveryLoop();
 
   // Probe 9Router saat boot: kalau mati, admin tahu sebelum pelanggan komplain.
   probeAi().catch(() => {});

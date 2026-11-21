@@ -334,6 +334,7 @@ export function settingsPage({ wa, router, disk, counts, envInfo, backup = null 
     </ul>
     <form method="post" action="/admin/settings/cleanup" class="mt" onsubmit="return confirm('Hapus artefak kedaluwarsa sekarang?')"><button class="btn ghost">Bersihkan data kedaluwarsa</button></form>
     <form method="post" action="/admin/settings/backup" class="mt" onsubmit="return confirm('Jalankan backup database sekarang?')"><button class="btn ghost">Backup database sekarang</button></form>
+    <form method="post" action="/admin/settings/recover" class="mt"><button class="btn ghost">Pulihkan order tertahan</button></form>
   </div>
   <div class="card"><h3>Konfigurasi</h3>
     <ul class="list-clean">

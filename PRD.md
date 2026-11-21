@@ -4,6 +4,21 @@
 
 Dokumen di bawah ini adalah PRD asli. Bagian changelog ini mencatat **deviasi implementasi** terhadap PRD, sesuai instruksi build: aplikasi harus berjalan di satu container dengan sumber daya terbatas.
 
+## Pembaruan hardening (2026-11-21, setelah audit kode 4.932 baris)
+
+Deviasi/perubahan tambahan pada build ini:
+
+1. **Portal pesanan bertoken** — `/pesanan/<kode>?t=<token>` menggantikan `/download/:file` tanpa autentikasi. Token 32 byte base64url, **hanya hash SHA-256** yang disimpan (`access_tokens.token_hash`, `orders.download_token`), berlaku 30 hari, bisa dicabut dengan mengganti hash. Link dikirim otomatis lewat WhatsApp setelah dokumen jadi.
+2. **Guard simulator** — `SIMULATOR_ENABLED` default `false` saat `NODE_ENV=production`; router mengembalikan 404, halaman `/simulator` 404, dan tautan nav disembunyikan. Bila diaktifkan, tetap wajib sesi admin (`simGuard` → 401).
+3. **Promo & referral nyata** — tabel `discounts` + `discount_uses`, `orders.discount_amount`. Pelanggan memakai kode dengan membalas `PAKAI <kode>`. Kredit referral Rp5.000 baru masuk setelah order teman **lunas** (`approvePayment` → `creditReferrer`), bukan saat order dibuat. Maks potongan `REFERRAL_MAX_SHARE_PCT` (50%). Halaman admin `/admin/promo`.
+4. **Rate-limit login admin** — 5 kegagalan → lock 15 menit per IP (tabel `login_attempts`), HTTP 429, plus audit `admin_login_failed`/`admin_login_locked`.
+5. **Backup harian** — `VACUUM INTO` ke `db-YYYYMMDD.sqlite` (aman saat WAL aktif, tanpa stop app), retensi 14 hari, jadwal 03:00 WIB + tombol manual di `/admin/settings`. Bisa juga dipicu tiap 30 menit lewat cek `maybeDailyBackup()`.
+6. **Probe AI saat boot** — `/models` lalu fallback uji `/chat/completions`; status disimpan di `app_settings.ai_health`, tampil di dashboard + `/health`, alert Telegram maksimal 1×/jam bila gagal. Pemakaian token dicatat ke tabel usage (`router9_ok`/`router9_failed`).
+7. **Kalibrasi skor ATS** — `scoreFormat` memakai alias heading ID+EN, penalti berbatas (maks 20 untuk heading hilang, -10 halaman, -10 font, -25 kolom), dan mengembalikan `penalties[]` agar skor CV sehat tidak jatuh ke 15/100.
+8. **Tema CV + watermark preview** — `ats`/`modern`/`executive` (semua satu kolom, tanpa tabel/gambar), watermark strip diagonal untuk pratinjau.
+9. **Halaman legal** — `/privasi`, `/syarat`, `/refund`, plus retensi data 30 hari (`DATA_RETENTION_DAYS`) dan kontak `CONTACT_EMAIL`.
+10. **Migrasi baru `002_hardening.sql`** — tidak mengubah `001_init.sql` karena DB berjalan tidak boleh diubah retroaktif; `migrate.js` menerapkan berurutan.
+
 ## Deviasi arsitektur (disetujui untuk build ini)
 
 1. **Satu container, satu proses Node, satu port (8092).** PRD menyebut beberapa layanan; implementasi menggabungkan HTTP API, dashboard admin, worker antrean, dan gateway WhatsApp ke `src/index.js`. Alasan: RAM host 787 MB dengan ~560 MB sudah dipakai container lain.
